@@ -12,112 +12,88 @@ env:
 jobs:
   sim-tests:
     runs-on: ubuntu-latest
+
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
+
+      - name: 🛠️ Set up Buildx (container driver)
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+          driver: docker-container
+          buildkitd-flags: --debug
 
       - name: 🐳 Build image
         uses: docker/build-push-action@v5
         with:
           context: .
-          load: true
+          file: ./Dockerfile
           tags: ${{ env.DOCKER_IMAGE }}
+          load: true
+          builder: ${{ steps.buildx.outputs.name }}
           cache-from: type=gha
-          cache-to:   type=gha,mode=max
+          cache-to: type=gha,mode=max
 
       - name: 🔧 Make scripts executable
         run: chmod +x run_sitl.sh
 
-      # ---------- Ortak fonksiyon: container içinde pytest XML'ini değerlendir ----------
-      - name: ✍️ Write result-check script
-        run: |
-          cat > .ci_check.py <<'PY'
-          import sys, xml.etree.ElementTree as ET
-          p = sys.argv[1]
-          root = ET.parse(p).getroot()
-          # JUnit biçimi; pytest tüm testler bir suite altında olur genelde
-          fails  = sum(1 for _ in root.iter("failure"))
-          errors = sum(1 for _ in root.iter("error"))
-          # xfail'leri "skipped" olarak yazar; mesajında "xfail" geçer
-          xfails = 0
-          for s in root.iter("skipped"):
-              msg = (s.attrib.get("message","") + (s.text or "")).lower()
-              if "xfail" in msg or "expected failure" in msg:
-                  xfails += 1
-          print(f"xfails={xfails} fails={fails} errors={errors}")
-          sys.exit(0 if (fails==0 and errors==0 and xfails==0) else 1)
-          PY
-
       # ---------- TASK 1 ----------
       - name: 🚀 Run Task 1 – Arm/Disarm
         id: task1
-        continue-on-error: true
         run: |
           mkdir -p .ci_artifacts
-          set +e
           docker run --rm -t \
-            -e CI=true \
             -e FORCE_RUN=1 \
             -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
               set -e
               colcon build --symlink-install --packages-select candidate_package test_package
               source install/setup.bash
               ./run_sitl.sh
-              # NOT: pytest argümanlarını tek stringte veriyoruz; -k yanlış parse olmasın
-              if ! colcon test --packages-select test_package \
-                   --event-handlers console_direct+ \
-                   --pytest-args "-k test_task_1_arm_disarm -s -vv" ; then
-                echo "[task1] colcon test returned non-zero"
-              fi
-              colcon test-result --verbose || true
+
+              rc=0
+              # PyTest'i doğrudan koşturuyoruz; -k güvenle çalışır
+              python3 -m pytest -c src/test_package/setup.cfg \
+                -k "test_task_1_arm_disarm" -s -vv src/test_package/test \
+                --junit-xml build/test_package/pytest_task1.xml || rc=$?
+
               mkdir -p /ws/.ci_artifacts
               cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log || true
-              cp build/test_package/pytest.xml /ws/.ci_artifacts/task1_pytest.xml || true
+              cp build/test_package/pytest_task1.xml /ws/.ci_artifacts/pytest_task1.xml || true
+              exit $rc
             '
-          rc=0
-          # XFAIL/FATAL var mı diye XML'e bak
-          python3 .ci_check.py .ci_artifacts/task1_pytest.xml || rc=1
-          if [ $rc -eq 0 ]; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
-          else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
-          fi
-          echo "rc=$rc" >> $GITHUB_OUTPUT
-          exit 0  # job düşmesin; iki task da raporlansın
+        continue-on-error: true
+      - run: echo "rc=$?" >> $GITHUB_OUTPUT
+        id: task1rc
+        shell: bash
 
       # ---------- TASK 2 ----------
-      - name: 🚀 Run Task 2 – Takeoff/Land
+      - name: 🛫 Run Task 2 – Takeoff/Land
         id: task2
-        continue-on-error: true
         run: |
-          set +e
           docker run --rm -t \
-            -e CI=true \
             -e FORCE_RUN=1 \
             -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
               set -e
               colcon build --symlink-install --packages-select candidate_package test_package
               source install/setup.bash
               ./run_sitl.sh
-              if ! colcon test --packages-select test_package \
-                   --event-handlers console_direct+ \
-                   --pytest-args "-k test_task_2_takeoff_land -s -vv" ; then
-                echo "[task2] colcon test returned non-zero"
-              fi
-              colcon test-result --verbose || true
+
+              rc=0
+              python3 -m pytest -c src/test_package/setup.cfg \
+                -k "test_task_2_takeoff_land" -s -vv src/test_package/test \
+                --junit-xml build/test_package/pytest_task2.xml || rc=$?
+
               mkdir -p /ws/.ci_artifacts
               cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log || true
-              cp build/test_package/pytest.xml /ws/.ci_artifacts/task2_pytest.xml || true
+              cp build/test_package/pytest_task2.xml /ws/.ci_artifacts/pytest_task2.xml || true
+              exit $rc
             '
-          rc=0
-          python3 .ci_check.py .ci_artifacts/task2_pytest.xml || rc=1
-          if [ $rc -eq 0 ]; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
-          else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
-          fi
-          echo "rc=$rc" >> $GITHUB_OUTPUT
-          exit 0
+        continue-on-error: true
+      - run: echo "rc=$?" >> $GITHUB_OUTPUT
+        id: task2rc
+        shell: bash
 
       - name: 📎 Upload artifacts
         if: always()
@@ -129,15 +105,21 @@ jobs:
       - name: 📝 Summary
         if: always()
         run: |
-          {
-            echo "## 🛩️ UAV Assessment Results"
-            echo
-            echo "- Task 1 (Arm/Disarm): **${{ steps.task1.outputs.status }}** (rc=${{ steps.task1.outputs.rc }})"
-            echo "- Task 2 (Takeoff/Land): **${{ steps.task2.outputs.status }}** (rc=${{ steps.task2.outputs.rc }})"
-            echo
-            echo "### Task 1 – SITL log (tail)"
-            [ -f .ci_artifacts/task1_sitl.log ] && tail -n 40 .ci_artifacts/task1_sitl.log || echo "(no log)"
-            echo
-            echo "### Task 2 – SITL log (tail)"
-            [ -f .ci_artifacts/task2_sitl.log ] && tail -n 40 .ci_artifacts/task2_sitl.log || echo "(no log)"
-          } >> "$GITHUB_STEP_SUMMARY"
+          # step outcome'larını topla
+          T1="${{ steps.task1.outcome }}"
+          T2="${{ steps.task2.outcome }}"
+          echo "## 🛩️ UAV Assessment Results" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "- Task 1 (Arm/Disarm): **$T1**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Task 2 (Takeoff/Land): **$T2**" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "### Task 1 – SITL log (tail)" >> "$GITHUB_STEP_SUMMARY"
+          [ -f .ci_artifacts/task1_sitl.log ] && tail -n 40 .ci_artifacts/task1_sitl.log >> "$GITHUB_STEP_SUMMARY" || echo "(no log)" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "### Task 2 – SITL log (tail)" >> "$GITHUB_STEP_SUMMARY"
+          [ -f .ci_artifacts/task2_sitl.log ] && tail -n 40 .ci_artifacts/task2_sitl.log >> "$GITHUB_STEP_SUMMARY" || echo "(no log)" >> "$GITHUB_STEP_SUMMARY"
+
+      # herhangi biri fail ise job'ı düşür
+      - name: ❌ Fail job if any task failed
+        if: ${{ always() && (steps.task1.outcome == 'failure' || steps.task2.outcome == 'failure') }}
+        run: exit 1
