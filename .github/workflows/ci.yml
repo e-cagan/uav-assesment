@@ -37,6 +37,7 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p .ci_artifacts
+          set +e
           docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
             set -e
             colcon build --symlink-install --packages-select candidate_package test_package
@@ -44,8 +45,9 @@ jobs:
             ./run_sitl.sh
             rc=0
             if ! colcon test --packages-select test_package \
-                --event-handlers console_direct+ \
-                --pytest-args "-k test_task_1_arm_disarm -s -vv" ; then
+                 --event-handlers console_direct+ \
+                 --pytest-args -k --pytest-args test_task_1_arm_disarm \
+                 --pytest-args -s --pytest-args -vv ; then
               rc=$?
             fi
             colcon test-result --verbose || true
@@ -54,12 +56,16 @@ jobs:
             cp build/test_package/pytest.xml /ws/.ci_artifacts/task1_pytest.xml || true
             exit $rc
           '
+          rc=$?
+          if [ $rc -eq 0 ]; then echo "status=PASS" >> $GITHUB_OUTPUT; else echo "status=FAIL" >> $GITHUB_OUTPUT; fi
+          echo "rc=$rc" >> $GITHUB_OUTPUT
 
       # ---------- TASK 2 ----------
       - name: 🚀 Run Task 2 – Takeoff/Land
         id: task2
         continue-on-error: true
         run: |
+          set +e
           docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
             set -e
             colcon build --symlink-install --packages-select candidate_package test_package
@@ -67,8 +73,9 @@ jobs:
             ./run_sitl.sh
             rc=0
             if ! colcon test --packages-select test_package \
-                --event-handlers console_direct+ \
-                --pytest-args "-k test_task_2_takeoff_land -s -vv" ; then
+                 --event-handlers console_direct+ \
+                 --pytest-args -k --pytest-args test_task_2_takeoff_land \
+                 --pytest-args -s --pytest-args -vv ; then
               rc=$?
             fi
             colcon test-result --verbose || true
@@ -77,6 +84,9 @@ jobs:
             cp build/test_package/pytest.xml /ws/.ci_artifacts/task2_pytest.xml || true
             exit $rc
           '
+          rc=$?
+          if [ $rc -eq 0 ]; then echo "status=PASS" >> $GITHUB_OUTPUT; else echo "status=FAIL" >> $GITHUB_OUTPUT; fi
+          echo "rc=$rc" >> $GITHUB_OUTPUT
 
       - name: 📎 Upload artifacts
         if: always()
@@ -91,8 +101,8 @@ jobs:
           {
             echo "## 🛩️ UAV Assessment Results"
             echo
-            echo "- Task 1 (Arm/Disarm): **${{ steps.task1.conclusion }}**"
-            echo "- Task 2 (Takeoff/Land): **${{ steps.task2.conclusion }}**"
+            echo "- Task 1 (Arm/Disarm): **${{ steps.task1.outputs.status }}** (rc=${{ steps.task1.outputs.rc }})"
+            echo "- Task 2 (Takeoff/Land): **${{ steps.task2.outputs.status }}** (rc=${{ steps.task2.outputs.rc }})"
             echo
             echo "### Task 1 – SITL log (tail)"
             [ -f .ci_artifacts/task1_sitl.log ] && tail -n 40 .ci_artifacts/task1_sitl.log || echo "(no log)"
