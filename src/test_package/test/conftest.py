@@ -20,11 +20,16 @@ def _sitl_up() -> bool:
 
 
 def pytest_runtest_setup(item):
-    # Sadece uçuş testleri SITL ister
+    # Uçuş testleri SITL ister
     if "requires_sitl" in item.keywords and not _sitl_up():
         pytest.skip("SITL not running; start with ./run_sitl.sh")
 
-    # connect() henüz implement değilse default XFAIL yapalım
-    # CI'da FORCE_RUN=1 verirsek gerçek FAIL'i göster
-    if "requires_connect" in item.keywords and os.getenv("FORCE_RUN", "0") != "1":
-        pytest.xfail("connect() not implemented yet (skeleton)")
+    # Bağlantı isteyen testlerde:
+    # - CI ortamında (CI=true) asla xfail yapma -> gerçek sonuç dönsün
+    # - Lokal ortamda FORCE_RUN=1 verilmişse yine çalıştır
+    # - Aksi halde lokalde iskelet için xfail ver
+    if "requires_connect" in item.keywords:
+        in_ci = os.getenv("CI", "").lower() in ("1", "true", "yes")
+        force_run = os.getenv("FORCE_RUN", "0") == "1"
+        if not in_ci and not force_run:
+            pytest.xfail("connect() not implemented yet (skeleton)")
