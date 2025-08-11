@@ -36,21 +36,22 @@ jobs:
         id: task1
         continue-on-error: true
         run: |
-            mkdir -p .ci_artifacts
-            docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc "
-            set -e
-            colcon build --symlink-install --packages-select candidate_package test_package
-            source install/setup.bash
-            ./run_sitl.sh
-            # Sadece Task 1 i koştur (tek tırnak yok!)
-            colcon test --packages-select test_package \
+          mkdir -p .ci_artifacts
+          docker run --rm -t \
+            -e FORCE_RUN=1 \
+            -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc "
+              set -e
+              colcon build --symlink-install --packages-select candidate_package test_package
+              source install/setup.bash
+              ./run_sitl.sh
+              colcon test --packages-select test_package \
                 --event-handlers console_direct+ \
                 --pytest-args -k --pytest-args test_task_1_arm_disarm \
                 --pytest-args -s --pytest-args -vv || true
-            colcon test-result --verbose || true
-            mkdir -p /ws/.ci_artifacts
-            cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log || true
-            cp build/test_package/pytest.xml /ws/.ci_artifacts/task1_pytest.xml || true
+              colcon test-result --verbose || true
+              mkdir -p /ws/.ci_artifacts
+              cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log || true
+              cp build/test_package/pytest.xml /ws/.ci_artifacts/task1_pytest.xml || true
             "
 
       # ---------- TASK 2 ----------
@@ -58,22 +59,22 @@ jobs:
         id: task2
         continue-on-error: true
         run: |
-            docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc "
-            set -e
-            colcon build --symlink-install --packages-select candidate_package test_package
-            source install/setup.bash
-            ./run_sitl.sh
-            # Sadece Task 2 yi koştur
-            colcon test --packages-select test_package \
+          docker run --rm -t \
+            -e FORCE_RUN=1 \
+            -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc "
+              set -e
+              colcon build --symlink-install --packages-select candidate_package test_package
+              source install/setup.bash
+              ./run_sitl.sh
+              colcon test --packages-select test_package \
                 --event-handlers console_direct+ \
                 --pytest-args -k --pytest-args test_task_2_takeoff_land \
                 --pytest-args -s --pytest-args -vv || true
-            colcon test-result --verbose || true
-            mkdir -p /ws/.ci_artifacts
-            cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log || true
-            cp build/test_package/pytest.xml /ws/.ci_artifacts/task2_pytest.xml || true
+              colcon test-result --verbose || true
+              mkdir -p /ws/.ci_artifacts
+              cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log || true
+              cp build/test_package/pytest.xml /ws/.ci_artifacts/task2_pytest.xml || true
             "
-
 
       - name: 📎 Upload artifacts
         if: always()
