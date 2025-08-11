@@ -42,58 +42,39 @@ jobs:
       # ---------- TASK 1 ----------
       - name: 🚀 Run Task 1 – Arm/Disarm
         id: task1
+        continue-on-error: true
         run: |
           mkdir -p .ci_artifacts
-          docker run --rm -t \
-            -e FORCE_RUN=1 \
-            -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-              set -e
-              colcon build --symlink-install --packages-select candidate_package test_package
-              source install/setup.bash
-              ./run_sitl.sh
-
-              rc=0
-              # PyTest'i doğrudan koşturuyoruz; -k güvenle çalışır
-              python3 -m pytest -c src/test_package/setup.cfg \
-                -k "test_task_1_arm_disarm" -s -vv src/test_package/test \
-                --junit-xml build/test_package/pytest_task1.xml || rc=$?
-
-              mkdir -p /ws/.ci_artifacts
-              cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log || true
-              cp build/test_package/pytest_task1.xml /ws/.ci_artifacts/pytest_task1.xml || true
-              exit $rc
-            '
-        continue-on-error: true
-      - run: echo "rc=$?" >> $GITHUB_OUTPUT
-        id: task1rc
-        shell: bash
+          docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
+            set -e
+            colcon build --symlink-install --packages-select candidate_package test_package
+            source install/setup.bash
+            ./run_sitl.sh
+            rc=0
+            python3 -m pytest -c src/test_package/setup.cfg -k test_task_1_arm_disarm -s -vv src/test_package/test --junit-xml build/test_package/pytest_task1.xml || rc=$?
+            mkdir -p /ws/.ci_artifacts
+            cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log || true
+            cp build/test_package/pytest_task1.xml /ws/.ci_artifacts/pytest_task1.xml || true
+            exit $rc
+          '
 
       # ---------- TASK 2 ----------
       - name: 🛫 Run Task 2 – Takeoff/Land
         id: task2
-        run: |
-          docker run --rm -t \
-            -e FORCE_RUN=1 \
-            -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-              set -e
-              colcon build --symlink-install --packages-select candidate_package test_package
-              source install/setup.bash
-              ./run_sitl.sh
-
-              rc=0
-              python3 -m pytest -c src/test_package/setup.cfg \
-                -k "test_task_2_takeoff_land" -s -vv src/test_package/test \
-                --junit-xml build/test_package/pytest_task2.xml || rc=$?
-
-              mkdir -p /ws/.ci_artifacts
-              cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log || true
-              cp build/test_package/pytest_task2.xml /ws/.ci_artifacts/pytest_task2.xml || true
-              exit $rc
-            '
         continue-on-error: true
-      - run: echo "rc=$?" >> $GITHUB_OUTPUT
-        id: task2rc
-        shell: bash
+        run: |
+          docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
+            set -e
+            colcon build --symlink-install --packages-select candidate_package test_package
+            source install/setup.bash
+            ./run_sitl.sh
+            rc=0
+            python3 -m pytest -c src/test_package/setup.cfg -k test_task_2_takeoff_land -s -vv src/test_package/test --junit-xml build/test_package/pytest_task2.xml || rc=$?
+            mkdir -p /ws/.ci_artifacts
+            cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log || true
+            cp build/test_package/pytest_task2.xml /ws/.ci_artifacts/pytest_task2.xml || true
+            exit $rc
+          '
 
       - name: 📎 Upload artifacts
         if: always()
@@ -105,13 +86,10 @@ jobs:
       - name: 📝 Summary
         if: always()
         run: |
-          # step outcome'larını topla
-          T1="${{ steps.task1.outcome }}"
-          T2="${{ steps.task2.outcome }}"
           echo "## 🛩️ UAV Assessment Results" >> "$GITHUB_STEP_SUMMARY"
           echo >> "$GITHUB_STEP_SUMMARY"
-          echo "- Task 1 (Arm/Disarm): **$T1**" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Task 2 (Takeoff/Land): **$T2**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Task 1 (Arm/Disarm): **${{ steps.task1.outcome }}**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Task 2 (Takeoff/Land): **${{ steps.task2.outcome }}**" >> "$GITHUB_STEP_SUMMARY"
           echo >> "$GITHUB_STEP_SUMMARY"
           echo "### Task 1 – SITL log (tail)" >> "$GITHUB_STEP_SUMMARY"
           [ -f .ci_artifacts/task1_sitl.log ] && tail -n 40 .ci_artifacts/task1_sitl.log >> "$GITHUB_STEP_SUMMARY" || echo "(no log)" >> "$GITHUB_STEP_SUMMARY"
@@ -119,7 +97,6 @@ jobs:
           echo "### Task 2 – SITL log (tail)" >> "$GITHUB_STEP_SUMMARY"
           [ -f .ci_artifacts/task2_sitl.log ] && tail -n 40 .ci_artifacts/task2_sitl.log >> "$GITHUB_STEP_SUMMARY" || echo "(no log)" >> "$GITHUB_STEP_SUMMARY"
 
-      # herhangi biri fail ise job'ı düşür
       - name: ❌ Fail job if any task failed
         if: ${{ always() && (steps.task1.outcome == 'failure' || steps.task2.outcome == 'failure') }}
         run: exit 1
