@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail   # <— -u yok
 
 # Kullanım: ./run_mavros.sh [PORT]
-# Default: 14557 (senin dediğin port)
 PORT="${1:-14557}"
 
-# ROS 2 ortamı
 if [ -f "/opt/ros/humble/setup.bash" ]; then
+  # ROS setup dosyası -u ile source edilemez, biz zaten -u kullanmıyoruz
   source /opt/ros/humble/setup.bash
 fi
 

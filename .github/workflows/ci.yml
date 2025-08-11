@@ -45,40 +45,35 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-            set -euo pipefail
-            mkdir -p /ws/.ci_artifacts
+            docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
+                set -eo pipefail
+                mkdir -p /ws/.ci_artifacts
 
-            # Debug: image içinde ROS ve PX4 var mı?
-            test -d /opt/ros/humble || { echo "[ERR] ROS not found in image"; exit 1; }
-            test -d /opt/PX4-Autopilot || { echo "[ERR] PX4 not found in image"; exit 1; }
+                test -d /opt/ros/humble || { echo "[ERR] ROS not found in image"; exit 1; }
+                test -d /opt/PX4-Autopilot || { echo "[ERR] PX4 not found in image"; exit 1; }
 
-            source /opt/ros/humble/setup.bash
+                source /opt/ros/humble/setup.bash
 
-            ./run_sitl.sh || true
+                ./run_sitl.sh || true
 
-            # MAVROS uça, logu dök ve background çalıştır
-            nohup ./run_mavros.sh 14557 > /tmp/mavros.log 2>&1 &
+                nohup ./run_mavros.sh 14557 > /tmp/mavros.log 2>&1 &
 
-            # /mavros/state için 20 sn bekle
-            ok=0
-            for i in $(seq 1 40); do
-              source /opt/ros/humble/setup.bash
-              if ros2 topic list 2>/dev/null | grep -q "/mavros/state"; then
-                echo "[OK] MAVROS up"
-                ok=1
-                break
-              fi
-              sleep 0.5
-            done
+                ok=0
+                for i in $(seq 1 40); do
+                source /opt/ros/humble/setup.bash
+                if ros2 topic list 2>/dev/null | grep -q "/mavros/state"; then
+                    echo "[OK] MAVROS up"
+                    ok=1
+                    break
+                fi
+                sleep 0.5
+                done
 
-            # logları kopyala
-            cp /tmp/sitl.log   /ws/.ci_artifacts/mavros_sitl.log  2>/dev/null || true
-            cp /tmp/mavros.log /ws/.ci_artifacts/mavros.log       2>/dev/null || true
+                cp /tmp/sitl.log   /ws/.ci_artifacts/mavros_sitl.log  2>/dev/null || true
+                cp /tmp/mavros.log /ws/.ci_artifacts/mavros.log       2>/dev/null || true
 
-            # durum
-            test "$ok" -eq 1
-          '
+                test "$ok" -eq 1
+            '
 
       # ------------------ TASK 1 ------------------
       - name: 🚀 Run Task 1 – Arm/Disarm
@@ -86,25 +81,25 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-            set -euo pipefail
-            mkdir -p /ws/.ci_artifacts
+            docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
+                set -eo pipefail
+                mkdir -p /ws/.ci_artifacts
 
-            source /opt/ros/humble/setup.bash
+                source /opt/ros/humble/setup.bash
 
-            colcon build --symlink-install --packages-select candidate_package test_package
-            source install/setup.bash
-            ./run_sitl.sh || true
+                colcon build --symlink-install --packages-select candidate_package test_package
+                source install/setup.bash
+                ./run_sitl.sh || true
 
-            rc=0
-            python3 -m pytest -c src/test_package/setup.cfg \
-              -k "test_task_1_arm_disarm" -s -vv src/test_package/test \
-              --junit-xml build/test_package/pytest_task1.xml || rc=$?
+                rc=0
+                python3 -m pytest -c src/test_package/setup.cfg \
+                -k "test_task_1_arm_disarm" -s -vv src/test_package/test \
+                --junit-xml build/test_package/pytest_task1.xml || rc=$?
 
-            cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log 2>/dev/null || true
-            cp build/test_package/pytest_task1.xml /ws/.ci_artifacts/pytest_task1.xml 2>/dev/null || true
-            exit $rc
-          '
+                cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log 2>/dev/null || true
+                cp build/test_package/pytest_task1.xml /ws/.ci_artifacts/pytest_task1.xml 2>/dev/null || true
+                exit $rc
+            '
 
       # ------------------ TASK 2 ------------------
       - name: 🛫 Run Task 2 – Takeoff/Land
@@ -112,25 +107,25 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-            set -euo pipefail
-            mkdir -p /ws/.ci_artifacts
+            docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
+                set -eo pipefail
+                mkdir -p /ws/.ci_artifacts
 
-            source /opt/ros/humble/setup.bash
+                source /opt/ros/humble/setup.bash
 
-            colcon build --symlink-install --packages-select candidate_package test_package
-            source install/setup.bash
-            ./run_sitl.sh || true
+                colcon build --symlink-install --packages-select candidate_package test_package
+                source install/setup.bash
+                ./run_sitl.sh || true
 
-            rc=0
-            python3 -m pytest -c src/test_package/setup.cfg \
-              -k "test_task_2_takeoff_land" -s -vv src/test_package/test \
-              --junit-xml build/test_package/pytest_task2.xml || rc=$?
+                rc=0
+                python3 -m pytest -c src/test_package/setup.cfg \
+                -k "test_task_2_takeoff_land" -s -vv src/test_package/test \
+                --junit-xml build/test_package/pytest_task2.xml || rc=$?
 
-            cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log 2>/dev/null || true
-            cp build/test_package/pytest_task2.xml /ws/.ci_artifacts/pytest_task2.xml 2>/dev/null || true
-            exit $rc
-          '
+                cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log 2>/dev/null || true
+                cp build/test_package/pytest_task2.xml /ws/.ci_artifacts/pytest_task2.xml 2>/dev/null || true
+                exit $rc
+            '
 
       - name: 📎 Upload artifacts
         if: always()
