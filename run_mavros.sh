@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Kullanım: ./run_mavros.sh [PORT]
-# Varsayılan: 14540 (PX4 SITL default UDP portu)
-PORT="${1:-14540}"
+# Default: 14557 (senin dediğin port)
+PORT="${1:-14557}"
 
 # ROS 2 ortamı
 if [ -f "/opt/ros/humble/setup.bash" ]; then
@@ -13,7 +13,6 @@ fi
 URL="udp://:${PORT}@"
 echo "[MAVROS] starting mavros_node with fcu_url=${URL}"
 
-# Namespace: /mavros
 exec ros2 run mavros mavros_node --ros-args \
   -r __ns:=/mavros \
   -p fcu_url:="${URL}" \
