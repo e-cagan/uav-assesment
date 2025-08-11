@@ -36,54 +36,47 @@ jobs:
         id: task1
         continue-on-error: true
         run: |
-            mkdir -p .ci_artifacts
-            docker run --rm -t \
-            -e FORCE_RUN=1 \
-            -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc "
-                set -e
-                colcon build --symlink-install --packages-select candidate_package test_package
-                source install/setup.bash
-                ./run_sitl.sh
-                rc=0
-                if ! colcon test --packages-select test_package \
-                    --event-handlers console_direct+ \
-                    --pytest-args -k --pytest-args test_task_1_arm_disarm \
-                    --pytest-args -s --pytest-args -vv ; then
-                rc=\$?
-                fi
-                # test-result nonzero dökebilir; raporu yine alalım
-                colcon test-result --verbose || true
-                mkdir -p /ws/.ci_artifacts
-                cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log || true
-                cp build/test_package/pytest.xml /ws/.ci_artifacts/task1_pytest.xml || true
-                exit \$rc
-            "
+          mkdir -p .ci_artifacts
+          docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
+            set -e
+            colcon build --symlink-install --packages-select candidate_package test_package
+            source install/setup.bash
+            ./run_sitl.sh
+            rc=0
+            if ! colcon test --packages-select test_package \
+                --event-handlers console_direct+ \
+                --pytest-args "-k test_task_1_arm_disarm -s -vv" ; then
+              rc=$?
+            fi
+            colcon test-result --verbose || true
+            mkdir -p /ws/.ci_artifacts
+            cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log || true
+            cp build/test_package/pytest.xml /ws/.ci_artifacts/task1_pytest.xml || true
+            exit $rc
+          '
 
       # ---------- TASK 2 ----------
       - name: 🚀 Run Task 2 – Takeoff/Land
         id: task2
         continue-on-error: true
         run: |
-            docker run --rm -t \
-            -e FORCE_RUN=1 \
-            -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc "
-                set -e
-                colcon build --symlink-install --packages-select candidate_package test_package
-                source install/setup.bash
-                ./run_sitl.sh
-                rc=0
-                if ! colcon test --packages-select test_package \
-                    --event-handlers console_direct+ \
-                    --pytest-args -k --pytest-args test_task_2_takeoff_land \
-                    --pytest-args -s --pytest-args -vv ; then
-                rc=\$?
-                fi
-                colcon test-result --verbose || true
-                mkdir -p /ws/.ci_artifacts
-                cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log || true
-                cp build/test_package/pytest.xml /ws/.ci_artifacts/task2_pytest.xml || true
-                exit \$rc
-            "
+          docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
+            set -e
+            colcon build --symlink-install --packages-select candidate_package test_package
+            source install/setup.bash
+            ./run_sitl.sh
+            rc=0
+            if ! colcon test --packages-select test_package \
+                --event-handlers console_direct+ \
+                --pytest-args "-k test_task_2_takeoff_land -s -vv" ; then
+              rc=$?
+            fi
+            colcon test-result --verbose || true
+            mkdir -p /ws/.ci_artifacts
+            cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log || true
+            cp build/test_package/pytest.xml /ws/.ci_artifacts/task2_pytest.xml || true
+            exit $rc
+          '
 
       - name: 📎 Upload artifacts
         if: always()
@@ -98,8 +91,8 @@ jobs:
           {
             echo "## 🛩️ UAV Assessment Results"
             echo
-            echo "- Task 1 (Arm/Disarm): **${{ steps.task1.outcome }}**"
-            echo "- Task 2 (Takeoff/Land): **${{ steps.task2.outcome }}**"
+            echo "- Task 1 (Arm/Disarm): **${{ steps.task1.conclusion }}**"
+            echo "- Task 2 (Takeoff/Land): **${{ steps.task2.conclusion }}**"
             echo
             echo "### Task 1 – SITL log (tail)"
             [ -f .ci_artifacts/task1_sitl.log ] && tail -n 40 .ci_artifacts/task1_sitl.log || echo "(no log)"
