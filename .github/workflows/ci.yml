@@ -34,10 +34,31 @@ jobs:
           load: true
           builder: ${{ steps.buildx.outputs.name }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to:   type=gha,mode=max
 
       - name: 🔧 Make scripts executable
-        run: chmod +x run_sitl.sh
+        run: chmod +x run_sitl.sh run_mavros.sh
+
+      # ---- MAVROS Smoke (isteğe bağlı, hızlı doğrulama) ----
+      - name: 🧪 MAVROS smoke
+        id: mavros_smoke
+        continue-on-error: true
+        run: |
+          docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
+            set -e
+            ./run_sitl.sh
+            (./run_mavros.sh 14540 > /tmp/mavros.log 2>&1 &) 
+            # /mavros/state topic'ini bekle
+            for i in {1..30}; do
+              if ros2 topic list | grep -q "/mavros/state"; then
+                echo "[OK] MAVROS up"
+                exit 0
+              fi
+              sleep 0.5
+            done
+            echo "[ERR] MAVROS not up"
+            exit 1
+          '
 
       # ---------- TASK 1 ----------
       - name: 🚀 Run Task 1 – Arm/Disarm
@@ -45,36 +66,44 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p .ci_artifacts
-          docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-            set -e
-            colcon build --symlink-install --packages-select candidate_package test_package
-            source install/setup.bash
-            ./run_sitl.sh
-            rc=0
-            python3 -m pytest -c src/test_package/setup.cfg -k test_task_1_arm_disarm -s -vv src/test_package/test --junit-xml build/test_package/pytest_task1.xml || rc=$?
-            mkdir -p /ws/.ci_artifacts
-            cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log || true
-            cp build/test_package/pytest_task1.xml /ws/.ci_artifacts/pytest_task1.xml || true
-            exit $rc
-          '
+          docker run --rm -t \
+            -e FORCE_RUN=1 \
+            -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
+              set -e
+              colcon build --symlink-install --packages-select candidate_package test_package
+              source install/setup.bash
+              ./run_sitl.sh
+
+              python3 -m pytest -c src/test_package/setup.cfg \
+                -k "test_task_1_arm_disarm" -s -vv src/test_package/test \
+                --junit-xml build/test_package/pytest_task1.xml
+
+              mkdir -p /ws/.ci_artifacts
+              cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log || true
+              cp build/test_package/pytest_task1.xml /ws/.ci_artifacts/pytest_task1.xml || true
+            '
 
       # ---------- TASK 2 ----------
       - name: 🛫 Run Task 2 – Takeoff/Land
         id: task2
         continue-on-error: true
         run: |
-          docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-            set -e
-            colcon build --symlink-install --packages-select candidate_package test_package
-            source install/setup.bash
-            ./run_sitl.sh
-            rc=0
-            python3 -m pytest -c src/test_package/setup.cfg -k test_task_2_takeoff_land -s -vv src/test_package/test --junit-xml build/test_package/pytest_task2.xml || rc=$?
-            mkdir -p /ws/.ci_artifacts
-            cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log || true
-            cp build/test_package/pytest_task2.xml /ws/.ci_artifacts/pytest_task2.xml || true
-            exit $rc
-          '
+          docker run --rm -t \
+            -e FORCE_RUN=1 \
+            -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
+              set -e
+              colcon build --symlink-install --packages-select candidate_package test_package
+              source install/setup.bash
+              ./run_sitl.sh
+
+              python3 -m pytest -c src/test_package/setup.cfg \
+                -k "test_task_2_takeoff_land" -s -vv src/test_package/test \
+                --junit-xml build/test_package/pytest_task2.xml
+
+              mkdir -p /ws/.ci_artifacts
+              cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log || true
+              cp build/test_package/pytest_task2.xml /ws/.ci_artifacts/pytest_task2.xml || true
+            '
 
       - name: 📎 Upload artifacts
         if: always()
@@ -88,6 +117,7 @@ jobs:
         run: |
           echo "## 🛩️ UAV Assessment Results" >> "$GITHUB_STEP_SUMMARY"
           echo >> "$GITHUB_STEP_SUMMARY"
+          echo "- MAVROS smoke: **${{ steps.mavros_smoke.outcome }}**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Task 1 (Arm/Disarm): **${{ steps.task1.outcome }}**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Task 2 (Takeoff/Land): **${{ steps.task2.outcome }}**" >> "$GITHUB_STEP_SUMMARY"
           echo >> "$GITHUB_STEP_SUMMARY"
@@ -97,6 +127,7 @@ jobs:
           echo "### Task 2 – SITL log (tail)" >> "$GITHUB_STEP_SUMMARY"
           [ -f .ci_artifacts/task2_sitl.log ] && tail -n 40 .ci_artifacts/task2_sitl.log >> "$GITHUB_STEP_SUMMARY" || echo "(no log)" >> "$GITHUB_STEP_SUMMARY"
 
+      # herhangi biri fail ise job'ı düşür
       - name: ❌ Fail job if any task failed
-        if: ${{ always() && (steps.task1.outcome == 'failure' || steps.task2.outcome == 'failure') }}
+        if: ${{ always() && (steps.mavros_smoke.outcome == 'failure' || steps.task1.outcome == 'failure' || steps.task2.outcome == 'failure') }}
         run: exit 1

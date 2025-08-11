@@ -44,13 +44,15 @@ RUN sed -i \
   's/math::max(PTHREAD_STACK_MIN, PX4_STACK_ADJUSTED(wq->stacksize))/math::max((size_t)PTHREAD_STACK_MIN, (size_t)PX4_STACK_ADJUSTED(wq->stacksize))/g' \
   platforms/common/px4_work_queue/WorkQueueManager.cpp
 
-# Gazebo pluginleriyle birlikte SITL derle
+# Gazebo pluginleriyle birlikte SITL derle (build sırasında bir kez headless koşturur)
 RUN make px4_sitl gazebo
 
-# (İSTEĞE BAĞLI) MAVROS eklemek için aşağıyı aç:
-# RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-#     ros-humble-mavros ros-humble-mavros-extras \
-#  && rm -rf /var/lib/apt/lists/*
+# --- MAVROS + GeographicLib datasetleri ---
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    ros-humble-mavros ros-humble-mavros-extras geographiclib-tools \
+ && rm -rf /var/lib/apt/lists/*
+# build aşamasında ROS ortamını yükleyip datasetleri indir
+RUN bash -lc 'source /opt/ros/humble/setup.bash && ros2 run mavros install_geographiclib_datasets.sh'
 
 # Çalışma alanı
 WORKDIR /ws
