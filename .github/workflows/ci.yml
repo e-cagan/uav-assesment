@@ -6,8 +6,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+# GHCR'a push için gerekli
+permissions:
+  contents: read
+  packages: write
+
 env:
-  DOCKER_IMAGE: uav-assessment-env:ci
+  IMAGE_NAME: uav-assessment-env
+  LOCAL_IMAGE: uav-assessment-env:ci
+  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/uav-assessment-env
 
 jobs:
   sim-tests:
@@ -25,12 +32,13 @@ jobs:
           driver: docker-container
           buildkitd-flags: --debug
 
-      - name: 🐳 Build image
+      # Testler için local'e LOAD ediyoruz (push YOK)
+      - name: 🐳 Build image (load for tests)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          tags: ${{ env.DOCKER_IMAGE }}
+          tags: ${{ env.LOCAL_IMAGE }}
           load: true
           builder: ${{ steps.buildx.outputs.name }}
           cache-from: type=gha
@@ -45,35 +53,34 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-            docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-                set -eo pipefail
-                mkdir -p /ws/.ci_artifacts
+          docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.LOCAL_IMAGE }} bash -lc '
+            set -eo pipefail
+            mkdir -p /ws/.ci_artifacts
 
-                test -d /opt/ros/humble || { echo "[ERR] ROS not found in image"; exit 1; }
-                test -d /opt/PX4-Autopilot || { echo "[ERR] PX4 not found in image"; exit 1; }
+            test -d /opt/ros/humble || { echo "[ERR] ROS not found in image"; exit 1; }
+            test -d /opt/PX4-Autopilot || { echo "[ERR] PX4 not found in image"; exit 1; }
 
-                source /opt/ros/humble/setup.bash
+            source /opt/ros/humble/setup.bash
+            ./run_sitl.sh || true
 
-                ./run_sitl.sh || true
+            nohup ./run_mavros.sh 14557 > /tmp/mavros.log 2>&1 &
 
-                nohup ./run_mavros.sh 14557 > /tmp/mavros.log 2>&1 &
+            ok=0
+            for i in $(seq 1 40); do
+              source /opt/ros/humble/setup.bash
+              if ros2 topic list 2>/dev/null | grep -q "/mavros/state"; then
+                echo "[OK] MAVROS up"
+                ok=1
+                break
+              fi
+              sleep 0.5
+            done
 
-                ok=0
-                for i in $(seq 1 40); do
-                source /opt/ros/humble/setup.bash
-                if ros2 topic list 2>/dev/null | grep -q "/mavros/state"; then
-                    echo "[OK] MAVROS up"
-                    ok=1
-                    break
-                fi
-                sleep 0.5
-                done
+            cp /tmp/sitl.log   /ws/.ci_artifacts/mavros_sitl.log  2>/dev/null || true
+            cp /tmp/mavros.log /ws/.ci_artifacts/mavros.log       2>/dev/null || true
 
-                cp /tmp/sitl.log   /ws/.ci_artifacts/mavros_sitl.log  2>/dev/null || true
-                cp /tmp/mavros.log /ws/.ci_artifacts/mavros.log       2>/dev/null || true
-
-                test "$ok" -eq 1
-            '
+            test "$ok" -eq 1
+          '
 
       # ------------------ TASK 1 ------------------
       - name: 🚀 Run Task 1 – Arm/Disarm
@@ -81,25 +88,25 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-            docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-                set -eo pipefail
-                mkdir -p /ws/.ci_artifacts
+          docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.LOCAL_IMAGE }} bash -lc '
+            set -eo pipefail
+            mkdir -p /ws/.ci_artifacts
 
-                source /opt/ros/humble/setup.bash
+            source /opt/ros/humble/setup.bash
 
-                colcon build --symlink-install --packages-select candidate_package test_package
-                source install/setup.bash
-                ./run_sitl.sh || true
+            colcon build --symlink-install --packages-select candidate_package test_package
+            source install/setup.bash
+            ./run_sitl.sh || true
 
-                rc=0
-                python3 -m pytest -c src/test_package/setup.cfg \
-                -k "test_task_1_arm_disarm" -s -vv src/test_package/test \
-                --junit-xml build/test_package/pytest_task1.xml || rc=$?
+            rc=0
+            python3 -m pytest -c src/test_package/setup.cfg \
+              -k "test_task_1_arm_disarm" -s -vv src/test_package/test \
+              --junit-xml build/test_package/pytest_task1.xml || rc=$?
 
-                cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log 2>/dev/null || true
-                cp build/test_package/pytest_task1.xml /ws/.ci_artifacts/pytest_task1.xml 2>/dev/null || true
-                exit $rc
-            '
+            cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log 2>/dev/null || true
+            cp build/test_package/pytest_task1.xml /ws/.ci_artifacts/pytest_task1.xml 2>/dev/null || true
+            exit $rc
+          '
 
       # ------------------ TASK 2 ------------------
       - name: 🛫 Run Task 2 – Takeoff/Land
@@ -107,25 +114,25 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-            docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-                set -eo pipefail
-                mkdir -p /ws/.ci_artifacts
+          docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.LOCAL_IMAGE }} bash -lc '
+            set -eo pipefail
+            mkdir -p /ws/.ci_artifacts
 
-                source /opt/ros/humble/setup.bash
+            source /opt/ros/humble/setup.bash
 
-                colcon build --symlink-install --packages-select candidate_package test_package
-                source install/setup.bash
-                ./run_sitl.sh || true
+            colcon build --symlink-install --packages-select candidate_package test_package
+            source install/setup.bash
+            ./run_sitl.sh || true
 
-                rc=0
-                python3 -m pytest -c src/test_package/setup.cfg \
-                -k "test_task_2_takeoff_land" -s -vv src/test_package/test \
-                --junit-xml build/test_package/pytest_task2.xml || rc=$?
+            rc=0
+            python3 -m pytest -c src/test_package/setup.cfg \
+              -k "test_task_2_takeoff_land" -s -vv src/test_package/test \
+              --junit-xml build/test_package/pytest_task2.xml || rc=$?
 
-                cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log 2>/dev/null || true
-                cp build/test_package/pytest_task2.xml /ws/.ci_artifacts/pytest_task2.xml 2>/dev/null || true
-                exit $rc
-            '
+            cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log 2>/dev/null || true
+            cp build/test_package/pytest_task2.xml /ws/.ci_artifacts/pytest_task2.xml 2>/dev/null || true
+            exit $rc
+          '
 
       - name: 📎 Upload artifacts
         if: always()
@@ -134,6 +141,32 @@ jobs:
           name: ci-artifacts
           path: .ci_artifacts
 
+      # ---- GHCR Publish (Packages) ----
+      - name: 🔐 Login to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Push: sadece main ve PR olmayan koşulda, testler başarılıysa
+      - name: 📦 Publish image to GHCR (Packages)
+        id: publish
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && success() }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.GHCR_IMAGE }}:latest
+            ${{ env.GHCR_IMAGE }}:${{ github.sha }}
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ---- Summary (collapsible logs + pull komutları) ----
       - name: 📝 Summary
         if: always()
         shell: bash
@@ -142,19 +175,52 @@ jobs:
             echo "## 🛩️ UAV Assessment Results"
             echo
             echo "- MAVROS smoke: **${{ steps.mavros.outcome }}**"
+            echo "<details><summary>Logs</summary>"
+            echo
+            if [ -f .ci_artifacts/mavros.log ]; then
+              echo '```text'
+              tail -n 60 .ci_artifacts/mavros.log
+              echo '```'
+            else
+              echo "_(no mavros.log)_"
+            fi
+            echo "</details>"
+            echo
             echo "- Task 1 (Arm/Disarm): **${{ steps.task1.outcome }}**"
+            echo "<details><summary>Task 1 – SITL log (tail)</summary>"
+            if [ -f .ci_artifacts/task1_sitl.log ]; then
+              echo '```text'
+              tail -n 60 .ci_artifacts/task1_sitl.log
+              echo '```'
+            else
+              echo "_(no task1_sitl.log)_"
+            fi
+            echo "</details>"
+            echo
             echo "- Task 2 (Takeoff/Land): **${{ steps.task2.outcome }}**"
+            echo "<details><summary>Task 2 – SITL log (tail)</summary>"
+            if [ -f .ci_artifacts/task2_sitl.log ]; then
+              echo '```text'
+              tail -n 60 .ci_artifacts/task2_sitl.log
+              echo '```'
+            else
+              echo "_(no task2_sitl.log)_"
+            fi
+            echo "</details>"
             echo
-            echo "### MAVROS log (tail)"
-            [ -f .ci_artifacts/mavros.log ] && tail -n 40 .ci_artifacts/mavros.log || echo "(no mavros.log)"
+            echo "### 🐋 Docker image (GHCR)"
+            echo "Pushed on success to **Packages** as:"
             echo
-            echo "### Task 1 – SITL log (tail)"
-            [ -f .ci_artifacts/task1_sitl.log ] && tail -n 40 .ci_artifacts/task1_sitl.log || echo "(no task1_sitl.log)"
+            echo '```bash'
+            echo "docker pull ${{ env.GHCR_IMAGE }}:latest"
+            echo "docker pull ${{ env.GHCR_IMAGE }}:${{ github.sha }}"
             echo
-            echo "### Task 2 – SITL log (tail)"
-            [ -f .ci_artifacts/task2_sitl.log ] && tail -n 40 .ci_artifacts/task2_sitl.log || echo "(no task2_sitl.log)"
+            echo "# örnek çalıştırma:"
+            echo "docker run -it --rm ${{ env.GHCR_IMAGE }}:latest bash"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Herhangi bir adım fail ise job'ı düşür
       - name: ❌ Fail job if any step failed
         if: ${{ always() && (steps.mavros.outcome == 'failure' || steps.task1.outcome == 'failure' || steps.task2.outcome == 'failure') }}
         run: exit 1
