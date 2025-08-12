@@ -6,15 +6,19 @@ on:
   pull_request:
   workflow_dispatch:
 
+# GHCR'a push için gerekli
+permissions:
+  contents: read
+  packages: write
+
 env:
-  DOCKER_IMAGE: uav-assessment-env:ci
+  IMAGE_NAME: uav-assessment-env
+  LOCAL_IMAGE: uav-assessment-env:ci
+  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/uav-assessment-env
 
 jobs:
   sim-tests:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write   # GHCR push için şart
 
     steps:
       - name: 📥 Checkout
@@ -28,13 +32,13 @@ jobs:
           driver: docker-container
           buildkitd-flags: --debug
 
-      # Testler için local'e load et (push yok)
-      - name: 🐳 Build image (load for CI)
+      # Testler için local'e LOAD ediyoruz (push YOK)
+      - name: 🐳 Build image (load for tests)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          tags: ${{ env.DOCKER_IMAGE }}
+          tags: ${{ env.LOCAL_IMAGE }}
           load: true
           builder: ${{ steps.buildx.outputs.name }}
           cache-from: type=gha
@@ -47,88 +51,88 @@ jobs:
       - name: 🧪 MAVROS smoke
         id: mavros
         continue-on-error: true
+        shell: bash
         run: |
-          docker run --rm -t \
-            -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-              set -euo pipefail
-              mkdir -p /ws/.ci_artifacts
+          docker run --rm -t -v "$PWD":/ws -w /ws ${{ env.LOCAL_IMAGE }} bash -lc '
+            set -eo pipefail
+            mkdir -p /ws/.ci_artifacts
 
+            test -d /opt/ros/humble || { echo "[ERR] ROS not found in image"; exit 1; }
+            test -d /opt/PX4-Autopilot || { echo "[ERR] PX4 not found in image"; exit 1; }
+
+            source /opt/ros/humble/setup.bash
+            ./run_sitl.sh || true
+
+            nohup ./run_mavros.sh 14557 > /tmp/mavros.log 2>&1 &
+
+            ok=0
+            for i in $(seq 1 40); do
               source /opt/ros/humble/setup.bash
-              ./run_sitl.sh || true
+              if ros2 topic list 2>/dev/null | grep -q "/mavros/state"; then
+                echo "[OK] MAVROS up"
+                ok=1
+                break
+              fi
+              sleep 0.5
+            done
 
-              # MAVROS'u 14557 ile başlat
-              ( ./run_mavros.sh 14557 > /tmp/mavros.log 2>&1 & )
+            cp /tmp/sitl.log   /ws/.ci_artifacts/mavros_sitl.log  2>/dev/null || true
+            cp /tmp/mavros.log /ws/.ci_artifacts/mavros.log       2>/dev/null || true
 
-              # /mavros/state için 20 sn bekle
-              ok=0
-              for i in $(seq 1 40); do
-                source /opt/ros/humble/setup.bash
-                if ros2 topic list 2>/dev/null | grep -q "/mavros/state"; then
-                  echo "[OK] MAVROS up"
-                  ok=1
-                  break
-                fi
-                sleep 0.5
-              done
-
-              # logları dışarı kopyala
-              cp /tmp/sitl.log   /ws/.ci_artifacts/mavros_sitl.log  2>/dev/null || true
-              cp /tmp/mavros.log /ws/.ci_artifacts/mavros.log       2>/dev/null || true
-
-              test "$ok" -eq 1
-            '
+            test "$ok" -eq 1
+          '
 
       # ------------------ TASK 1 ------------------
       - name: 🚀 Run Task 1 – Arm/Disarm
         id: task1
         continue-on-error: true
+        shell: bash
         run: |
-          docker run --rm -t \
-            -e FORCE_RUN=1 \
-            -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-              set -euo pipefail
-              mkdir -p /ws/.ci_artifacts
+          docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.LOCAL_IMAGE }} bash -lc '
+            set -eo pipefail
+            mkdir -p /ws/.ci_artifacts
 
-              source /opt/ros/humble/setup.bash
-              colcon build --symlink-install --packages-select candidate_package test_package
-              source install/setup.bash
-              ./run_sitl.sh || true
+            source /opt/ros/humble/setup.bash
 
-              rc=0
-              python3 -m pytest -c src/test_package/setup.cfg \
-                -k "test_task_1_arm_disarm" -s -vv src/test_package/test \
-                --junit-xml build/test_package/pytest_task1.xml || rc=$?
+            colcon build --symlink-install --packages-select candidate_package test_package
+            source install/setup.bash
+            ./run_sitl.sh || true
 
-              cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log 2>/dev/null || true
-              cp build/test_package/pytest_task1.xml /ws/.ci_artifacts/pytest_task1.xml 2>/dev/null || true
-              exit $rc
-            '
+            rc=0
+            python3 -m pytest -c src/test_package/setup.cfg \
+              -k "test_task_1_arm_disarm" -s -vv src/test_package/test \
+              --junit-xml build/test_package/pytest_task1.xml || rc=$?
+
+            cp /tmp/sitl.log /ws/.ci_artifacts/task1_sitl.log 2>/dev/null || true
+            cp build/test_package/pytest_task1.xml /ws/.ci_artifacts/pytest_task1.xml 2>/dev/null || true
+            exit $rc
+          '
 
       # ------------------ TASK 2 ------------------
       - name: 🛫 Run Task 2 – Takeoff/Land
         id: task2
         continue-on-error: true
+        shell: bash
         run: |
-          docker run --rm -t \
-            -e FORCE_RUN=1 \
-            -v "$PWD":/ws -w /ws ${{ env.DOCKER_IMAGE }} bash -lc '
-              set -euo pipefail
-              mkdir -p /ws/.ci_artifacts
+          docker run --rm -t -e FORCE_RUN=1 -v "$PWD":/ws -w /ws ${{ env.LOCAL_IMAGE }} bash -lc '
+            set -eo pipefail
+            mkdir -p /ws/.ci_artifacts
 
-              source /opt/ros/humble/setup.bash
-              colcon build --symlink-install --packages-select candidate_package test_package
-              source install/setup.bash
-              ./run_sitl.sh || true
+            source /opt/ros/humble/setup.bash
 
-              rc=0
-              python3 -m pytest -c src/test_package/setup.cfg \
-                -k "test_task_2_takeoff_land" -s -vv src/test_package/test \
-                --junit-xml build/test_package/pytest_task2.xml || rc=$?
+            colcon build --symlink-install --packages-select candidate_package test_package
+            source install/setup.bash
+            ./run_sitl.sh || true
 
-              cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log 2>/dev/null || true
-              cp build/test_package/pytest_task2.xml /ws/.ci_artifacts/pytest_task2.xml 2>/dev/null || true
-              exit $rc
-            '
+            rc=0
+            python3 -m pytest -c src/test_package/setup.cfg \
+              -k "test_task_2_takeoff_land" -s -vv src/test_package/test \
+              --junit-xml build/test_package/pytest_task2.xml || rc=$?
+
+            cp /tmp/sitl.log /ws/.ci_artifacts/task2_sitl.log 2>/dev/null || true
+            cp build/test_package/pytest_task2.xml /ws/.ci_artifacts/pytest_task2.xml 2>/dev/null || true
+            exit $rc
+          '
 
       - name: 📎 Upload artifacts
         if: always()
@@ -137,9 +141,35 @@ jobs:
           name: ci-artifacts
           path: .ci_artifacts
 
-      # ---------- GH Summary (collapsible) ----------
+      # ---- GHCR Publish (Packages) ----
+      - name: 🔐 Login to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Push: sadece main ve PR olmayan koşulda, testler başarılıysa
+      - name: 📦 Publish image to GHCR (Packages)
+        id: publish
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && success() }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.GHCR_IMAGE }}:latest
+            ${{ env.GHCR_IMAGE }}:${{ github.sha }}
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ---- Summary (COLLAPSIBLE logs + pull komutları) ----
       - name: 📝 Summary
         if: always()
+        shell: bash
         run: |
           {
             echo "## 🛩️ UAV Assessment Results"
@@ -171,27 +201,19 @@ jobs:
             [ -f .ci_artifacts/task2_sitl.log ] && tail -n 80 .ci_artifacts/task2_sitl.log || echo "(no task2_sitl.log)"
             echo '```'
             echo "</details>"
+            echo
+
+            echo "### 🐋 Docker image (GHCR)"
+            echo "Pushed on success to **Packages** as:"
+            echo
+            echo '```bash'
+            echo "docker pull ${{ env.GHCR_IMAGE }}:latest"
+            echo "docker pull ${{ env.GHCR_IMAGE }}:${{ github.sha }}"
+            echo
+            echo "# örnek çalıştırma:"
+            echo "docker run -it --rm ${{ env.GHCR_IMAGE }}:latest bash"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-      # ---------- GHCR'ye push (main'de ve build başarılıysa) ----------
-      - name: 🔐 Login to GHCR
-        if: success() && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 🚀 Push image to GHCR
-        if: success() && github.ref == 'refs/heads/main'
-        run: |
-          OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}
-          docker tag ${{ env.DOCKER_IMAGE }} ghcr.io/$OWNER_LC/uav-assessment-env:ci
-          docker tag ${{ env.DOCKER_IMAGE }} ghcr.io/$OWNER_LC/uav-assessment-env:${GITHUB_SHA::7}
-          docker tag ${{ env.DOCKER_IMAGE }} ghcr.io/$OWNER_LC/uav-assessment-env:latest
-          docker push ghcr.io/$OWNER_LC/uav-assessment-env:ci
-          docker push ghcr.io/$OWNER_LC/uav-assessment-env:${GITHUB_SHA::7}
-          docker push ghcr.io/$OWNER_LC/uav-assessment-env:latest
 
       # Herhangi bir adım fail ise job'ı düşür
       - name: ❌ Fail job if any step failed
